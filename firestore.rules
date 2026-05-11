@@ -1,0 +1,40 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: insights
+    // Document ID: locationId (e.g., "country_france", "city_paris_france")
+    // Fields:
+    //   - languages: list (required)
+    //   - religions: string (required)
+    //   - population: string (required)
+    //   - medicalConcerns: string (required)
+    //   - culturalFacts: string (required)
+    //   - lastUpdated: timestamp (required)
+    //
+    // ===============================================================
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isValidInsight(data) {
+      return data.languages is list &&
+             data.religions is string &&
+             data.population is string &&
+             data.medicalConcerns is string &&
+             data.culturalFacts is string &&
+             data.lastUpdated is timestamp;
+    }
+
+    match /insights/{locationId} {
+      // Allow public read/write for the AI insights cache
+      // This bypasses the need for Anonymous Auth which may be disabled
+      allow read, write: if true;
+    }
+  }
+}

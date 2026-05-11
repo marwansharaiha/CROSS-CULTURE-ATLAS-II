@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "MedicalInsights": {
+      "title": "Medical Insights",
+      "description": "Cached AI-generated medical and cultural insights for a location.",
+      "type": "object",
+      "properties": {
+        "languages": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Primary languages and dialects spoken."
+        },
+        "religions": {
+          "type": "string",
+          "description": "Predominant religions and their impact on healthcare."
+        },
+        "population": {
+          "type": "string",
+          "description": "Population size and key demographics."
+        },
+        "medicalConcerns": {
+          "type": "string",
+          "description": "Specific cultural concerns for medical teams."
+        },
+        "culturalFacts": {
+          "type": "string",
+          "description": "Fascinating cultural facts relevant to healthcare."
+        },
+        "lastUpdated": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the last AI generation."
+        }
+      },
+      "required": ["languages", "religions", "population", "medicalConcerns", "culturalFacts", "lastUpdated"]
+    }
+  },
+  "firestore": {
+    "/insights/{locationId}": {
+      "schema": "MedicalInsights",
+      "description": "Collection of cached medical insights indexed by location name/ID."
+    }
+  }
+}
