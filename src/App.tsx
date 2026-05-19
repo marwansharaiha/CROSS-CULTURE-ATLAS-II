@@ -13,7 +13,6 @@ import {
   Graticule,
   Marker
 } from "react-simple-maps";
-import { GoogleGenAI, Type } from "@google/genai";
 import { geoCentroid, geoBounds } from "d3-geo";
 import * as topojson from "topojson-client";
 import { Map, Source, Layer, Marker as MapMarker, Popup, NavigationControl, FullscreenControl, useMap as useMapLibre } from 'react-map-gl/maplibre';
@@ -32,7 +31,7 @@ const NUMERIC_ISO_MAPPING: Record<string, string> = {
   "620": "prt", "300": "grc", "376": "isr", "784": "are", "152": "chl",
   "642": "rou", "398": "kaz", "012": "dza", "368": "irq", "504": "mar",
   "860": "uzb", "862": "ven", "288": "gha", "404": "ken", "231": "eth",
-  "834": "tza", "800": "uga", "104": "mmr", "116": "khm", "418": "lao",
+  "834": "tza", "180": "cod", "178": "cog", "800": "uga", "104": "mmr", "116": "khm", "418": "lao",
   "524": "npl", "144": "lka", "400": "jor", "422": "lbn", "760": "syr",
   "364": "irn", "004": "afg", "203": "cze", "348": "hun", "112": "blr",
   "100": "bgr", "688": "srb", "191": "hrv", "703": "svk", "705": "svn",
@@ -41,7 +40,7 @@ const NUMERIC_ISO_MAPPING: Record<string, string> = {
 };
 
 const ANYMAP_TILE_URL = "https://ts.anymap.dev/{z}/{x}/{y}.pbf";
-const MAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+const MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
 
 import { 
   Globe, 
@@ -78,40 +77,21 @@ const auth = getAuth(app);
 
 // Predefined language colors
 const LANGUAGE_COLORS: Record<string, string> = {
-  "English": "#3b82f6",
-  "Spanish": "#ef4444",
-  "French": "#8b5cf6",
-  "Chinese": "#f59e0b",
-  "Arabic": "#10b981",
-  "Russian": "#f43f5e",
-  "Portuguese": "#06b6d4",
-  "German": "#64748b",
-  "Japanese": "#ec4899",
-  "Hindi": "#f97316",
-  "Swahili": "#a855f7",
-  "Bengali": "#db2777",
-  "Turkish": "#dc2626",
-  "Indonesian": "#059669",
-  "Italian": "#4f46e5",
-  "Korean": "#f472b6",
-  "Vietnamese": "#2dd4bf",
-  "Urdu": "#84cc16",
-  "Punjabi": "#fbbf24",
-  "Tamil": "#6366f1",
-  "Telugu": "#a855f7",
-  "Marathi": "#ec4899",
-  "Swedish": "#0ea5e9",
-  "Danish": "#f87171",
-  "Norwegian": "#38bdf8",
-  "Finnish": "#60a5fa",
-  "Dutch": "#fb923c",
-  "Greek": "#34d399",
-  "Hebrew": "#818cf8",
-  "Thai": "#f472b6",
+  "English": "#2563eb",   // Blue
+  "Spanish": "#dc2626",   // Red
+  "French": "#7c3aed",    // Violet
+  "Chinese": "#ea580c",   // Orange
+  "Arabic": "#059669",    // Emerald
+  "Russian": "#e11d48",   // Rose
+  "Portuguese": "#0891b2",// Cyan
+  "German": "#475569",    // Slate
+  "Japanese": "#db2777",  // Pink
+  "Hindi": "#d97706",     // Amber
+  "Swahili": "#9333ea",   // Purple
   "Czech": "#ef4444",
   "Hungarian": "#22c55e",
   "Romanian": "#eab308",
-  "Other": "#94a3b8"
+  "Other": "#64748b"
 };
 
 const LOCAL_STORAGE_PREFIX = "geo_medical_cache_";
@@ -155,6 +135,8 @@ const setCachedInsight = (id: string, data: MedicalInsights) => {
 };
 
 interface MedicalInsights {
+  dominantLanguages: string[];
+  secondaryLanguages: string[];
   languages: string[];
   religions: string;
   population: string;
@@ -236,7 +218,7 @@ const normalizeName = (name: string | undefined): string => {
   let n = name.toLowerCase()
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Remove accents
     .replace(/\s+/g, '') // Remove spaces
-    .replace(/region|province|state|department|governorate|district|territory|prefecture|canton|division/g, '') // Remove common suffixes
+    .replace(/region|province|state|department|governorate|district|territory|prefecture|canton|division|ville|municipality|city/g, '') // Remove common suffixes
     .replace(/[^a-z0-9]/g, ''); // Remove non-alphanumeric
     
   // Handle specific common prefixes or edge cases
@@ -350,14 +332,18 @@ export default function App() {
       const city = cities.find(c => c.name === popupInfo.name);
       return {
         ...popupInfo,
-        languages: city?.medicalInsights?.languages || (city?.language ? [city.language] : [])
+        languages: city?.medicalInsights?.languages || (city?.language ? [city.language] : []),
+        dominantLanguages: city?.medicalInsights?.dominantLanguages || (city?.language ? [city.language] : []),
+        secondaryLanguages: city?.medicalInsights?.secondaryLanguages || []
       };
     } else {
       const normalizedKey = normalizeName(popupInfo.name);
       const region = regionMap[normalizedKey];
       return {
         ...popupInfo,
-        languages: region?.medicalInsights?.languages || (region?.language ? [region.language] : [])
+        languages: region?.medicalInsights?.languages || (region?.language ? [region.language] : []),
+        dominantLanguages: region?.medicalInsights?.dominantLanguages || (region?.language ? [region.language] : []),
+        secondaryLanguages: region?.medicalInsights?.secondaryLanguages || []
       };
     }
   }, [popupInfo, cities, regionMap]);
@@ -399,8 +385,15 @@ export default function App() {
       const normalizedName = normalizeName(name);
       
       // Try to find a match in regionMap using normalized keys
-      // Also try fuzzy matching or checking if the name is contained in the regionMap keys
-      const region = regionMap[normalizedName];
+      let region = regionMap[normalizedName];
+      
+      // Fallback: substring matching for slightly different naming conventions
+      if (!region && normalizedName.length > 2) {
+        const potentialKey = Object.keys(regionMap).find(key => 
+          key.length > 2 && (normalizedName.includes(key) || key.includes(normalizedName))
+        );
+        if (potentialKey) region = regionMap[potentialKey];
+      }
       
       // Inject properties for MapLibre styling
       feature.properties.linguisticColor = region?.color || 'rgba(30, 41, 59, 0.15)';
@@ -431,16 +424,13 @@ export default function App() {
       if (center[0] > 180) center[0] -= 360;
 
       const maxDelta = Math.max(dLng, dLat * 1.5); // Weight latitude more for better fit
-      const calculatedZoom = Math.max(1, (180 / maxDelta) * 0.8);
+      const calculatedZoom = Math.max(1, (180 / maxDelta) * 0.4);
       
       return { center, zoom: calculatedZoom };
     } catch (e) {
       return { center: [0, 0] as [number, number], zoom: 2 };
     }
   };
-
-  // Initialize Gemini
-  const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" }), []);
 
   const fetchMedicalInsights = useCallback(async (name: string, type: 'region' | 'city' | 'country', countryName?: string) => {
     if (!name) return;
@@ -467,72 +457,32 @@ export default function App() {
         ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
 
         if (lastUpdated > ninetyDaysAgo) {
-          setCachedInsight(locationId, cachedData);
-          updateStateWithInsights(name, type, cachedData, countryName);
-          setIsLoadingInsights(false);
-          return;
+          // Cache validation: Ensure essential new fields exist for countries
+          const isMissingData = type === 'country' && (!cachedData.majorCities || !cachedData.regionLanguages);
+          
+          if (!isMissingData) {
+            setCachedInsight(locationId, cachedData);
+            updateStateWithInsights(name, type, cachedData, countryName);
+            setIsLoadingInsights(false);
+            return;
+          }
         }
       }
 
-      // 2. Fetch from AI if not in cache or expired
-      let locationContext = "";
-      if (type === 'city') locationContext = `${name}, ${countryName}`;
-      else if (type === 'region') locationContext = `${name} region, ${countryName}`;
-      else locationContext = name;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `Act as a medical cultural consultant. For the ${type} of ${locationContext}, provide detailed information for a medical team.
-        You MUST use Google Search to find the most up-to-date and authoritative data from Wikipedia, the World Bank, World Health Organization (WHO), and official national statistical bureaus or health ministries.
-        
-        Return the data in JSON format with these fields:
-        - languages: array of primary languages and local dialects spoken in this specific ${type}.
-        - religions: string describing predominant religions and their specific impact on medical care.
-        - population: string with population size.
-        - medicalConcerns: string describing specific cultural concerns for medical teams.
-        - culturalFacts: string with one or two cultural facts.
-        - sources: array of URL strings or names of the renowned sources used for this data (e.g., ["Wikipedia", "World Bank", "WHO"]).
-        ${type === 'country' ? '- regionLanguages: (Optional) A JSON object mapping EVERY major region/state/province of this country to its primary spoken language. Use the exact standard English names (e.g., "Dodoma", "Arusha", "California") used in international map data (Natural Earth, GADM).' : ''}
-        ${type === 'country' ? '- majorCities: (Optional) An array of objects for the top 20 major cities, each with "name", "lat", "lng", and "primaryLanguage".' : ''}
-        
-        Be specific to the ${type} level if possible. If data is only available at the national level, specify that.`,
-        config: {
-          responseMimeType: "application/json",
-          tools: [{ googleSearch: {} }],
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              languages: { type: Type.ARRAY, items: { type: Type.STRING } },
-              religions: { type: Type.STRING },
-              population: { type: Type.STRING },
-              medicalConcerns: { type: Type.STRING },
-              culturalFacts: { type: Type.STRING },
-              sources: { type: Type.ARRAY, items: { type: Type.STRING } },
-              regionLanguages: { 
-                type: Type.OBJECT,
-                description: "Map of ALL official subdivision names (states/provinces/regions) to their primary spoken language. Use names that match international map standards (Natural Earth, GADM).",
-                additionalProperties: { type: Type.STRING }
-              },
-              majorCities: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING },
-                    lat: { type: Type.NUMBER },
-                    lng: { type: Type.NUMBER },
-                    primaryLanguage: { type: Type.STRING, description: "The primary language spoken in this city." }
-                  },
-                  required: ["name", "lat", "lng", "primaryLanguage"]
-                }
-              }
-            },
-            required: ["languages", "religions", "population", "medicalConcerns", "culturalFacts", "majorCities", "regionLanguages"]
-          }
-        }
+      // 2. Fetch from our API Proxy (server-side Gemini)
+      const apiResponse = await fetch('/api/insights', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name, type, countryName }),
       });
+
+      if (!apiResponse.ok) {
+        throw new Error('Failed to fetch insights from server');
+      }
       
-      const data = JSON.parse(response.text) as MedicalInsights;
+      const data = await apiResponse.json() as MedicalInsights;
       const dataToCache = { ...data, lastUpdated: Timestamp.now() };
 
       // 3. Save to Cloud and Local Cache
@@ -545,7 +495,7 @@ export default function App() {
     } finally {
       setIsLoadingInsights(false);
     }
-  }, [ai, regionMap, cities, selectedRegion?.name, selectedCity?.name]);
+  }, [regionMap, cities, selectedRegion?.name, selectedCity?.name]);
 
   const updateStateWithInsights = (name: string, type: 'region' | 'city' | 'country', data: MedicalInsights, countryName?: string) => {
     if (type === 'region') {
@@ -679,6 +629,12 @@ export default function App() {
         // Specific overrides
         name.includes("united states") ? "usa" : null,
         name.includes("united kingdom") ? "united-kingdom" : null,
+        name.includes("congo") && (name.includes("democratic") || name.includes("dr")) ? "democratic-republic-of-the-congo" : null,
+        name.includes("congo") && (name.includes("democratic") || name.includes("dr")) ? "rd-congo" : null,
+        name.includes("congo") && (name.includes("democratic") || name.includes("dr")) ? "congo-dr" : null,
+        name.includes("congo") && !name.includes("democratic") ? "republic-of-the-congo" : null,
+        name.includes("congo") && !name.includes("democratic") ? "congo-brazzaville" : null,
+        name.includes("tanzania") ? "tanzania" : null,
         name.includes("korea") && name.includes("south") ? "south-korea" : null,
         name.includes("korea") && name.includes("north") ? "north-korea" : null,
         name.includes("china") ? "china" : null,
@@ -862,13 +818,6 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    // Initial fetch for Tanzania to satisfy "cache data for Tanzania initially"
-    // Use ISO code to ensure consistent lookup
-    const tanzania = { id: '834', properties: { name: 'Tanzania', ISO_A3: 'TZA' } };
-    handleCountryClick(tanzania);
-  }, []);
-
   const handleCityClick = (city: CityData) => {
     setSelectedCity(city);
     setSelectedRegion(null);
@@ -1033,13 +982,28 @@ export default function App() {
                 </div>
               </div>
               {view === 'country' && (
-                <button 
-                  onClick={backToWorld}
-                  className="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-400 hover:text-white"
-                  title="Back to World Map"
-                >
-                  <ArrowLeft className="w-5 h-5" />
-                </button>
+                <div className="flex gap-1">
+                  <button 
+                    onClick={() => {
+                        if (selectedCountry) {
+                            const locationId = `country_${selectedCountry.name.toLowerCase().replace(/ /g, '_')}_`;
+                            localStorage.removeItem(LOCAL_STORAGE_PREFIX + locationId);
+                            fetchMedicalInsights(selectedCountry.name, 'country');
+                        }
+                    }}
+                    className="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-400 hover:text-white"
+                    title="Refresh Data"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={backToWorld}
+                    className="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-400 hover:text-white"
+                    title="Back to World Map"
+                  >
+                    <ArrowLeft className="w-5 h-5" />
+                  </button>
+                </div>
               )}
             </div>
 
@@ -1110,18 +1074,18 @@ export default function App() {
                         {/* Medical Quick Stats */}
                         <div className="grid grid-cols-2 gap-3">
                           <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700">
-                            <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
+                            <div className="flex items-center gap-2 text-slate-400 text-[10px] mb-1">
                               <Users className="w-3 h-3" /> Population
                             </div>
-                            <div className="text-sm font-semibold text-slate-200">
+                            <div className="text-xs font-semibold text-slate-200 leading-tight">
                               {insights?.population || "Loading..."}
                             </div>
                           </div>
                           <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700">
-                            <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
+                            <div className="flex items-center gap-2 text-slate-400 text-[10px] mb-1">
                               <Church className="w-3 h-3" /> Religion
                             </div>
-                            <div className="text-sm font-semibold text-slate-200 truncate">
+                            <div className="text-xs font-semibold text-slate-200 leading-tight">
                               {insights?.religions || "Loading..."}
                             </div>
                           </div>
@@ -1361,8 +1325,8 @@ export default function App() {
                       setCenter(coordinates as [number, number]);
                     }}
                   >
-                    <Sphere stroke="#475569" strokeWidth={0.5} fill="transparent" />
-                    <Graticule stroke="#475569" strokeWidth={0.5} />
+                    <Sphere stroke="#cbd5e1" strokeWidth={0.5} fill="#f8fafc" />
+                    <Graticule stroke="#e2e8f0" strokeWidth={0.5} />
                     
                     <Geographies geography={WORLD_GEO_URL}>
                       {({ geographies }) =>
@@ -1373,21 +1337,21 @@ export default function App() {
                             onClick={() => handleCountryClick(geo)}
                             style={{
                               default: {
-                                fill: "#0f172a",
-                                stroke: "#cbd5e1",
+                                fill: "#f1f5f9",
+                                stroke: "#94a3b8",
                                 strokeWidth: 0.5,
                                 outline: "none",
                               },
                               hover: {
-                                fill: "#1e293b",
-                                stroke: "#ffffff",
+                                fill: "#e2e8f0",
+                                stroke: "#64748b",
                                 strokeWidth: 1,
                                 outline: "none",
                                 cursor: "pointer"
                               },
                               pressed: {
-                                fill: "#3b82f6",
-                                stroke: "#ffffff",
+                                fill: "#cbd5e1",
+                                stroke: "#334155",
                                 outline: "none"
                               }
                             }}
@@ -1428,53 +1392,100 @@ export default function App() {
                         onClose={() => setPopupInfo(null)}
                         closeButton={true}
                         closeOnClick={false}
-                        className="z-[50]"
-                        maxWidth="300px"
+                        className="custom-map-popup z-[100]"
+                        maxWidth="320px"
                       >
-                        <div className="p-3 bg-slate-900/95 text-white border border-slate-800 rounded-xl shadow-2xl backdrop-blur-md overflow-hidden ring-1 ring-white/10">
-                          <div className="flex items-center gap-2 mb-2 border-b border-white/5 pb-2">
-                             <div className="p-1.5 bg-blue-600/20 rounded-lg">
-                               <Stethoscope className="w-3.5 h-3.5 text-blue-400" />
+                        <div className="p-4 bg-white/95 text-slate-800 border border-slate-200 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] backdrop-blur-xl overflow-hidden ring-1 ring-black/5">
+                          <div className="flex items-center gap-3 mb-3 border-b border-slate-100 pb-3">
+                             <div className="p-2 bg-blue-50 rounded-xl">
+                               <Stethoscope className="w-4 h-4 text-blue-600" />
                              </div>
                              <div className="flex-1">
-                               <h4 className="text-xs font-bold tracking-tight text-white line-clamp-1">{activePopupData.name}</h4>
-                               <p className="text-[9px] text-slate-500 uppercase tracking-widest">{activePopupData.type === 'city' ? 'City' : 'Subdivision'}</p>
+                               <h4 className="text-sm font-bold tracking-tight text-slate-900 line-clamp-1">{activePopupData.name}</h4>
+                               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-none mt-0.5">{activePopupData.type === 'city' ? 'City' : 'Subdivision'}</p>
                              </div>
                           </div>
                           
-                          <div className="space-y-2.5">
+                          <div className="space-y-4">
+                            {/* Dominant Languages */}
                             <div>
-                              <div className="text-[9px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
-                                <Palette className="w-2.5 h-2.5" /> Language Breakdown
+                              <div className="text-[10px] font-bold text-blue-600 uppercase mb-2 flex items-center gap-1.5">
+                                <Palette className="w-3 h-3" /> Dominant Languages
                               </div>
-                              <div className="flex flex-wrap gap-1.5">
-                                {activePopupData.languages.length > 0 ? (
-                                  activePopupData.languages.map((lang, idx) => (
+                              <div className="flex flex-wrap gap-2">
+                                {activePopupData.dominantLanguages && activePopupData.dominantLanguages.length > 0 ? (
+                                  activePopupData.dominantLanguages.map((lang, idx) => (
                                     <div 
-                                      key={`${lang}-${idx}`}
-                                      className="flex items-center gap-1.5 px-2 py-0.5 bg-slate-800/80 rounded-md border border-slate-700/50"
+                                      key={`dominant-${lang}-${idx}`}
+                                      className="flex items-center gap-2 px-2.5 py-1 bg-blue-50 rounded-lg border border-blue-100"
+                                    >
+                                      <div 
+                                        className="w-2 h-2 rounded-full" 
+                                        style={{ backgroundColor: getLanguageColor(lang) }} 
+                                      />
+                                      <span className="text-xs font-semibold text-blue-700">{lang}</span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="text-xs text-slate-400 italic">Identifying dominant languages...</div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Secondary Languages */}
+                            {activePopupData.secondaryLanguages && activePopupData.secondaryLanguages.length > 0 && (
+                              <div>
+                                <div className="text-[10px] font-bold text-slate-400 uppercase mb-2 flex items-center gap-1.5">
+                                  <Users className="w-3 h-3" /> Secondary Languages
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  {activePopupData.secondaryLanguages.map((lang, idx) => (
+                                    <div 
+                                      key={`secondary-${lang}-${idx}`}
+                                      className="flex items-center gap-2 px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-100"
                                     >
                                       <div 
                                         className="w-1.5 h-1.5 rounded-full" 
                                         style={{ backgroundColor: getLanguageColor(lang) }} 
                                       />
-                                      <span className="text-[10px] font-medium text-slate-200">{lang}</span>
+                                      <span className="text-xs font-medium text-slate-600">{lang}</span>
                                     </div>
-                                  ))
-                                ) : (
-                                  <div className="text-[10px] text-slate-500 italic">Identifying local languages...</div>
-                                )}
+                                  ))}
+                                </div>
                               </div>
-                            </div>
+                            )}
+
+                            {!activePopupData.dominantLanguages?.length && !activePopupData.secondaryLanguages?.length && activePopupData.languages?.length > 0 && (
+                                <div>
+                                  <div className="text-[10px] font-bold text-slate-400 uppercase mb-2 flex items-center gap-1.5">
+                                    <Palette className="w-3 h-3" /> Languages
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                    {activePopupData.languages.map((lang, idx) => (
+                                      <div 
+                                        key={`lang-${lang}-${idx}`}
+                                        className="flex items-center gap-2 px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-100"
+                                      >
+                                        <div 
+                                          className="w-2 h-2 rounded-full" 
+                                          style={{ backgroundColor: getLanguageColor(lang) }} 
+                                        />
+                                        <span className="text-xs font-semibold text-slate-700">{lang}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                            )}
 
                             <button 
                               onClick={() => {
                                 setIsSidebarOpen(true);
                                 setPopupInfo(null);
                               }}
-                              className="w-full py-1.5 bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 text-[10px] font-bold rounded-lg border border-blue-500/20 transition-all flex items-center justify-center gap-1.5"
+                              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-200/50 transition-all flex items-center justify-center gap-2 group"
                             >
-                              <Info className="w-3 h-3" /> View Medical Intelligence
+                              <Info className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" /> 
+                              View Medical Intelligence
                             </button>
                           </div>
                         </div>
@@ -1491,15 +1502,15 @@ export default function App() {
                         type="line"
                         source-layer="boundaries"
                         paint={{
-                          'line-color': '#ffffff',
+                          'line-color': '#0f172a',
                           'line-width': [
                             'match',
                             ['get', 'admin_level'],
-                            2, 2,
-                            4, 1.5,
-                            0.5
+                            2, 1.8,
+                            4, 1.2,
+                            0.6
                           ],
-                          'line-opacity': 0.15
+                          'line-opacity': 0.25
                         }}
                       />
                     </Source>
@@ -1564,13 +1575,13 @@ export default function App() {
                         key={city.id}
                         longitude={city.coordinates[0]}
                         latitude={city.coordinates[1]}
-                        anchor="bottom"
+                        anchor="center"
                         onClick={e => {
                           e.originalEvent.stopPropagation();
                           handleCityClick(city);
                         }}
                       >
-                        <div className="cursor-pointer group flex flex-col items-center">
+                        <div className="cursor-pointer group relative flex flex-col items-center">
                           <div 
                             className="w-4 h-4 rounded-full border-2 border-white shadow-lg transition-transform group-hover:scale-125 animate-pulse"
                             style={{ 
@@ -1578,7 +1589,7 @@ export default function App() {
                               boxShadow: `0 0 15px ${city.color || '#ef4444'}`
                             }}
                           />
-                          <div className="mt-1 px-2 py-0.5 bg-slate-900/90 text-white text-[10px] rounded border border-slate-700 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="absolute top-5 px-2 py-0.5 bg-slate-900/90 text-white text-[10px] rounded border border-slate-700 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
                             {city.name}
                           </div>
                         </div>

@@ -1,5 +1,6 @@
 {
   "name": "Cross-Culture Atlas",
   "description": "An interactive atlas for exploring and mapping languages and cultures across global sub-divisions with color-coding and AI-driven cultural insights.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
